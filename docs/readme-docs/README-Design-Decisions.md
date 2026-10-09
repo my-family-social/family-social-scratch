@@ -337,7 +337,7 @@ Neon let's you export data from the database tables (one at a time) but the impo
 These scripts are run in the project directory to populate tables. In the case below, the script will interrogate environment variables for S3 and will insert an entry into the family_s3_credentials table based on an input argument of family_id (28-thosecrazyhughletts)
 
 ```bash
- $env:S3_CREDENTIALS_MASTER_KEY="*************"; $env:FAMILY_SOCIAL_DATABASE_URL="postgresql://neondb_owner:************@ep-holy-violet-adh5ugnk-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=verify-full&channel_binding=require"; $env:AWS_ACCESS_KEY_ID="YOUR_AWS_ACCESS_KEY_ID"; $env:AWS_SECRET_ACCESS_KEY="YOUR_AWS_SECRET_ACCESS_KEY"; $env:AWS_S3_BUCKET_NAME="thosecrazyhughletts"; $env:AWS_REGION="us-east-2"; npm run seed:family-s3 -- --family-id 28 --rotate
+ $env:S3_CREDENTIALS_MASTER_KEY="*************"; $env:FAMILY_SOCIAL_DATABASE_URL="**************"; $env:AWS_ACCESS_KEY_ID="YOUR_AWS_ACCESS_KEY_ID"; $env:AWS_SECRET_ACCESS_KEY="YOUR_AWS_SECRET_ACCESS_KEY"; $env:AWS_S3_BUCKET_NAME="thosecrazyhughletts"; $env:AWS_REGION="us-east-2"; npm run seed:family-s3 -- --family-id 28 --rotate
  ```
 
   **Note**: The s3 master key and psql database credential above have been obfuscated.

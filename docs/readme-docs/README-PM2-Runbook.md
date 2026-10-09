@@ -17,6 +17,7 @@
   - [Operating Notes](#operating-notes)
 - [Troubleshooting](#troubleshooting)
   - [Query for Errors](#query-for-errors)
+  - [Login Blocked by Missing Resend API Key](#login-blocked-by-missing-resend-api-key)
   - [Crashing PM2 Woker(s)](#crashing-pm2-wokers)
   - [Getting PM2 Error Logs](#getting-pm2-error-logs)
   - [The pm2-ec2-user.service Service](#the-pm2-ec2-userservice-service)
@@ -279,6 +280,55 @@ sudo systemctl restart pm2-ec2-user.service
 ```bash
 sudo journalctl -u pm2-ec2-user.service --since "1 hours ago" --no-pager | grep "error"
 ```
+
+## Login Blocked by Missing Resend API Key
+
+If the login page loads but credential and Google sign-in do not respond, inspect
+the unfiltered journal while reproducing the problem:
+
+```bash
+sudo journalctl -u pm2-ec2-user.service -f -n 30 --no-pager
+```
+
+`Missing API key` at `send-2fa-code-email.ts` indicates that `RESEND_API_KEY`
+is absent from the application's runtime environment. Previously, the email
+client was constructed during module import, preventing all actions in the
+login module from loading, including sign-in paths that do not send email.
+The client is now created only when sending a 2FA email; missing configuration
+returns an explicit error without blocking other login paths.
+
+Add or restore `RESEND_API_KEY` in the Parameter Store configuration consumed
+by `/usr/local/bin/load-s3-master-key.sh`, and ensure that script writes it to
+`/run/family-social.env`. Do not paste the key into logs or troubleshooting output.
+Check only that a nonempty entry exists:
+
+```bash
+sudo awk '
+  /^[[:space:]]*RESEND_API_KEY=/ {
+    value = $0
+    sub(/^[[:space:]]*RESEND_API_KEY=/, "", value)
+    gsub(/[[:space:]\047\042]/, "", value)
+    if (length(value) > 0) found = 1
+  }
+  END {
+    print found ? "RESEND_API_KEY entry present (value hidden)" : "RESEND_API_KEY missing or empty"
+    exit !found
+  }
+' /run/family-social.env
+```
+
+After updating the configuration, restart the service to regenerate and load
+the environment:
+
+```bash
+sudo systemctl restart pm2-ec2-user.service
+sudo systemctl status pm2-ec2-user.service --no-pager -l
+```
+
+Repeat the presence check after restarting. An entry in the file alone does not
+prove the running process loaded a valid key. Verify credential sign-in, Google
+sign-in, and 2FA email delivery for an account with 2FA enabled. Deploy the code
+fix using the normal deploy sequence above.
 
 ## Crashing PM2 Woker(s)
 
