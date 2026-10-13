@@ -678,6 +678,7 @@ export async function savePoetryHomePoem(
         actionType: FAMILY_ACTIVITY_ACTION_TYPES.POST_CREATED,
         featureName: 'Poetry Nook',
         postName: normalizedTitle,
+        postId: savedPoemFact.id,
         familyId: actor.familyId,
         memberId: actor.memberId,
       });

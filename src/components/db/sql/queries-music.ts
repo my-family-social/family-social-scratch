@@ -1444,6 +1444,7 @@ export async function saveMusic(
         actionType: FAMILY_ACTIVITY_ACTION_TYPES.POST_CREATED,
         featureName: "Music Salon",
         postName: normalizedTitle,
+        postId: persistedMusic.id,
         familyId: actor.familyId,
         memberId: actor.memberId,
       });

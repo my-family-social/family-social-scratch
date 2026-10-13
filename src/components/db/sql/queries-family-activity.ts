@@ -316,6 +316,7 @@ type CreateFamilyActivityInput = {
   actionType: FamilyActivityActionType;
   featureName: string;
   postName: string;
+  postId?: number | null;
   familyId: number;
   memberId: number;
 };
@@ -325,6 +326,7 @@ export async function createFamilyActivityRecord(input: CreateFamilyActivityInpu
     actionType: input.actionType,
     featureName: input.featureName,
     postName: input.postName,
+    postId: input.postId ?? null,
     familyId: input.familyId,
     memberId: input.memberId,
   });

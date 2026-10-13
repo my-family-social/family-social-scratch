@@ -766,6 +766,7 @@ export async function saveBlogPost(
         actionType: FAMILY_ACTIVITY_ACTION_TYPES.POST_CREATED,
         featureName: BLOG_FEATURE_NAME,
         postName: normalizedTitle,
+        postId: createdPost.id,
         familyId: actor.familyId,
         memberId: actor.memberId,
       });

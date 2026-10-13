@@ -583,6 +583,7 @@ export async function createDiscussionThreadWithInitialPost(
 		actionType: FAMILY_ACTIVITY_ACTION_TYPES.DISCUSS_START,
 		featureName,
 		postName,
+		postId: featureName === 'Family Discussions' ? null : input.targetId,
 		familyId: actor.familyId,
 		memberId: actor.memberId,
 	});

@@ -589,6 +589,7 @@ export async function saveBooksHomeBook(
         actionType: FAMILY_ACTIVITY_ACTION_TYPES.POST_CREATED,
         featureName: 'Reading Room',
         postName: normalizedTitle,
+        postId: savedBookFact.id,
         familyId: actor.familyId,
         memberId: actor.memberId,
       });

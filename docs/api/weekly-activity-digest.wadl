@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<application xmlns="http://wadl.dev.java.net/2009/02"
+             xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <doc title="My Family Social - Weekly Activity Digest">
+    Protected internal scheduler kickoff. A 202 response means the run is persisted;
+    a separately running digest worker processes it. No browser login is required.
+    Configure the SoapUI project property FS_INTERNAL_API_SECRET locally.
+    Never save a real secret in this definition or commit a SoapUI project containing one.
+  </doc>
+  <resources base="https://local.my-family-social.com:3000">
+    <resource path="/api/internal/weekly-activity-digest/run">
+      <doc title="Weekly activity digest kickoff">
+        Change the endpoint host, scheme, or port in SoapUI to match the local app.
+      </doc>
+      <method name="POST" id="runWeeklyActivityDigest">
+        <doc title="Queue a weekly digest run">
+          The request body is JSON, not XML. Start with dryRun true.
+          WADL documents JSON examples but does not generate JSON bodies reliably
+          in SoapUI; paste the request example into the request editor after import.
+        </doc>
+        <request>
+          <param name="Content-Type" style="header" type="xs:string"
+                 required="true" fixed="application/json" />
+          <param name="x-fs-internal-secret" style="header" type="xs:string"
+                 required="true" default="${#Project#FS_INTERNAL_API_SECRET}">
+            <doc>Exact match against the app's FS_INTERNAL_API_SECRET environment variable.</doc>
+          </param>
+          <param name="x-fs-request-ts" style="header" type="xs:string"
+                 required="true" default="${=java.time.Instant.now().toString()}">
+            <doc>
+              ISO-8601 UTC timestamp ending in Z, within five minutes of the server clock.
+              The default is a SoapUI Groovy property expansion evaluated when sending.
+            </doc>
+          </param>
+          <param name="x-fs-idempotency-key" style="header" type="xs:string"
+                 required="true" default="soapui-weekly-${=java.util.UUID.randomUUID().toString()}">
+            <doc>
+              Scheduler key: 1-200 letters, digits, dots, underscores, colons, or hyphens.
+              The default generates a new key per send. Replace it with a literal value
+              when testing duplicates: the same key and week return 409.
+              Successful weekly member deliveries are not resent under a new key.
+            </doc>
+          </param>
+          <representation mediaType="application/json" id="weeklyDigestRunRequest">
+            <doc title="JSON request contract">
+              Required: weekStartUtc (Monday 00:00:00Z) and weekEndUtc
+              (the same week's Sunday 23:59:59.999Z).
+              Optional: dryRun (boolean, default false), forceReplay (boolean, default false),
+              familyIds (1-10000 distinct positive 32-bit integers; omit for all active/trial families),
+              minActivityScoreOverride (integer 0-2147483647; configured default is 12),
+              operatorNotes (1-2000 characters after trimming; required when forceReplay is true).
+              Explicit family IDs must exist and be active or trial. Unknown properties are rejected.
+              Two distinct posters are required regardless of the score override.
+              Replay retries only confirmed failed deliveries, never successful or uncertain deliveries.
+            </doc>
+            <doc title="Safe dry-run JSON example"><![CDATA[
+{
+  "weekStartUtc": "2026-10-05T00:00:00Z",
+  "weekEndUtc": "2026-10-11T23:59:59.999Z",
+  "dryRun": true,
+  "familyIds": [1]
+}
+]]></doc>
+          </representation>
+        </request>
+        <response status="202">
+          <doc title="Accepted">A durable run was queued; this does not confirm email delivery.</doc>
+          <representation mediaType="application/json">
+            <doc title="Success response example"><![CDATA[
+{
+  "success": true,
+  "runId": "b36c9bfb-1d76-4c49-9fb3-74fd7fd42243",
+  "status": "queued",
+  "weekStartUtc": "2026-10-05T00:00:00.000Z",
+  "weekEndUtc": "2026-10-11T23:59:59.999Z",
+  "familyScope": "subset",
+  "requestedFamilyCount": 1,
+  "dryRun": true,
+  "message": "Digest run persisted. The digest worker will process it."
+}
+]]></doc>
+          </representation>
+        </response>
+        <response status="400">
+          <doc title="Invalid request">Invalid JSON, payload, family scope, or scheduler key.</doc>
+          <representation mediaType="application/json">
+            <doc><![CDATA[
+{"success":false,"code":"INVALID_REQUEST","message":"Invalid digest request.","issues":[{"path":["weekStartUtc"],"message":"Must be Monday 00:00:00Z."}]}
+]]></doc>
+          </representation>
+        </response>
+        <response status="401">
+          <doc title="Unauthorized">Invalid or missing secret, or invalid/stale request timestamp.</doc>
+          <representation mediaType="application/json">
+            <doc><![CDATA[
+{"success":false,"code":"UNAUTHORIZED","message":"Invalid internal credentials or request timestamp."}
+]]></doc>
+          </representation>
+        </response>
+        <response status="409">
+          <doc title="Duplicate kickoff">The same week and kickoff key already identify a persisted run.</doc>
+          <representation mediaType="application/json">
+            <doc><![CDATA[
+{"success":false,"code":"ALREADY_QUEUED","runId":"b36c9bfb-1d76-4c49-9fb3-74fd7fd42243","message":"This key and week already identify a persisted run."}
+]]></doc>
+          </representation>
+        </response>
+        <response status="500">
+          <doc title="Internal failure">Server configuration or persistence failure; details are logged server-side.</doc>
+          <representation mediaType="application/json">
+            <doc><![CDATA[
+{"success":false,"code":"INTERNAL_ERROR","message":"Unable to queue the digest run."}
+]]></doc>
+          </representation>
+        </response>
+      </method>
+    </resource>
+  </resources>
+</application>

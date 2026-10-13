@@ -1074,6 +1074,7 @@ export async function saveMovie(
         actionType: FAMILY_ACTIVITY_ACTION_TYPES.POST_CREATED,
         featureName: "Movie Theater",
         postName: normalizedTitle,
+        postId: persistedMovie.id,
         familyId: actor.familyId,
         memberId: actor.memberId,
       });

@@ -5,11 +5,10 @@ import { logApiRouteError } from "@/components/api/api-error-logger";
 import { getMemberPageDetails } from "@/features/family/services/family-services";
 import { getS3ClientForFamily } from "@/lib/s3-client-factory";
 import { extractS3KeyFromValue } from "@/lib/s3-object-key";
+import { ALLOWED_S3_FOLDERS as ALLOWED_FOLDERS, isSafeObjectKey, toFamilyScopedKey } from "@/lib/s3-safe-object-key";
 
-const ALLOWED_FOLDERS = new Set(["members", "movies", "tv", "music", "foodies", "threads", "galleries", "blogs"]);
 const ALLOWED_ACTIONS = new Set(["upload", "download"]);
 const SAFE_FILE_NAME_REGEX = /^[A-Za-z0-9._-]+$/;
-const FAMILY_PREFIX_REGEX = /^family-\d+$/i;
 const IS_DEV = process.env.NODE_ENV !== "production";
 
 type ResolvedS3Context = {
@@ -20,40 +19,6 @@ type ResolvedS3Context = {
 
 function isSafeFileName(fileName: string) {
   return SAFE_FILE_NAME_REGEX.test(fileName) && !fileName.includes("..") && !fileName.includes("/") && !fileName.includes("\\");
-}
-
-const MEMBER_PREFIX_REGEX = /^member-\d+$/i;
-
-function isSafeObjectKey(key: string) {
-  const segments = key.split("/").filter(Boolean);
-
-  let folder: string | undefined;
-  let fileName: string | undefined;
-
-  if (segments.length === 2) {
-    // folder/filename
-    [folder, fileName] = segments;
-  } else if (segments.length === 3 && FAMILY_PREFIX_REGEX.test(segments[0] ?? "")) {
-    // family-##/folder/filename
-    [, folder, fileName] = segments;
-  } else if (
-    segments.length === 4 &&
-    FAMILY_PREFIX_REGEX.test(segments[0] ?? "") &&
-    segments[1] === "galleries" &&
-    MEMBER_PREFIX_REGEX.test(segments[2] ?? "")
-  ) {
-    // family-##/galleries/member-##/filename
-    folder = "galleries";
-    fileName = segments[3];
-  } else {
-    return false;
-  }
-
-  if (!ALLOWED_FOLDERS.has(folder)) {
-    return false;
-  }
-
-  return isSafeFileName(fileName);
 }
 
 function buildPublicObjectUrl(key: string, bucket: string, region: string) {
@@ -74,19 +39,6 @@ function buildS3Uri(key: string, bucket: string) {
   }
 
   return `s3://${bucket}/${key}`;
-}
-
-function getFamilyScopedPrefix(familyId: number) {
-  return `family-${familyId}`;
-}
-
-function toFamilyScopedKey(objectKey: string, familyId: number) {
-  const prefix = getFamilyScopedPrefix(familyId);
-  if (objectKey.toLowerCase().startsWith(`${prefix.toLowerCase()}/`)) {
-    return objectKey;
-  }
-
-  return `${prefix}/${objectKey}`;
 }
 
 function getEnvFallbackS3Context(): ResolvedS3Context | null {

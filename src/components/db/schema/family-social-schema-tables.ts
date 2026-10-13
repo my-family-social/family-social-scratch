@@ -1,5 +1,5 @@
 // ...existing code...
-import { pgSchema, serial, index, boolean, pgEnum, foreignKey, unique } from "drizzle-orm/pg-core";
+import { pgSchema, serial, bigserial, uuid, jsonb, index, boolean, pgEnum, foreignKey, unique } from "drizzle-orm/pg-core";
 import {is, like, not, sql } from 'drizzle-orm';
 import { number } from "zod";
 import { ta } from "date-fns/locale";
@@ -111,6 +111,8 @@ export const familyActivity = familySchema.table("family_activity", {
   actionType: text("action_type").notNull(),
   featureName: text("feature_name").notNull(),
   postName: text("post_name").notNull(),
+  // Id of the room post (movie, show, blog_post, gallery_album, ...) identified by featureName; null for legacy rows.
+  postId: integer("post_id"),
   status: text("status").notNull().default("active"),
   createdAt: timestamp("created_at").defaultNow(),
   familyId: integer("fk_family_id").notNull().references(() => family.id, {onDelete: 'cascade'}),
@@ -141,6 +143,77 @@ export const memberOption = familySchema.table("member_option", {
   optionId: integer("fk_option_id").notNull().references(() => memberOptionReference.id, {onDelete: 'cascade'}),
   isSelected: boolean("is_selected").notNull().default(false),
 });
+
+export const familyActivityDigestRun = familySchema.table("family_activity_digest_run", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  runId: uuid("run_id").notNull().unique(),
+  weekStartUtc: timestamp("week_start_utc", { withTimezone: true }).notNull(),
+  weekEndUtc: timestamp("week_end_utc", { withTimezone: true }).notNull(),
+  kickoffIdempotencyKey: text("kickoff_idempotency_key").notNull(),
+  triggerSource: text("trigger_source").notNull().default("eventbridge"),
+  dryRun: boolean("dry_run").notNull().default(false),
+  forceReplay: boolean("force_replay").notNull().default(false),
+  familyIds: jsonb("family_ids").$type<number[]>().notNull(),
+  thresholdValue: integer("threshold_value").notNull(),
+  operatorNotes: text("operator_notes"),
+  status: text("status").$type<"queued" | "processing" | "completed" | "failed">().notNull().default("queued"),
+  familiesScanned: integer("families_scanned").notNull().default(0),
+  familiesThresholdMet: integer("families_threshold_met").notNull().default(0),
+  recipientsTotal: integer("recipients_total").notNull().default(0),
+  emailsSent: integer("emails_sent").notNull().default(0),
+  emailsFailed: integer("emails_failed").notNull().default(0),
+  errorMessage: text("error_message"),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("digest_run_week_key_uq").on(table.weekStartUtc, table.kickoffIdempotencyKey),
+  index("digest_run_status_idx").on(table.status),
+]);
+
+export const familyActivityDigestResult = familySchema.table("family_activity_digest_result", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  runId: uuid("run_id").notNull().references(() => familyActivityDigestRun.runId, { onDelete: "cascade" }),
+  familyId: integer("fk_family_id").notNull().references(() => family.id, { onDelete: "cascade" }),
+  weekStartUtc: timestamp("week_start_utc", { withTimezone: true }).notNull(),
+  weekEndUtc: timestamp("week_end_utc", { withTimezone: true }).notNull(),
+  activityScore: integer("activity_score").notNull().default(0),
+  uniquePosters: integer("unique_posters").notNull().default(0),
+  totalEvents: integer("total_events").notNull().default(0),
+  thresholdValue: integer("threshold_value").notNull(),
+  thresholdMet: boolean("threshold_met").notNull().default(false),
+  recipientsEligible: integer("recipients_eligible").notNull().default(0),
+  emailsAttempted: integer("emails_attempted").notNull().default(0),
+  emailsSent: integer("emails_sent").notNull().default(0),
+  emailsFailed: integer("emails_failed").notNull().default(0),
+  status: text("status").$type<"skipped" | "sent-preview" | "sent" | "failed">().notNull().default("skipped"),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  processedAt: timestamp("processed_at", { withTimezone: true }),
+}, (table) => [
+  unique("digest_result_run_family_uq").on(table.runId, table.familyId),
+  index("digest_result_family_week_idx").on(table.familyId, table.weekStartUtc),
+  index("digest_result_run_idx").on(table.runId),
+  index("digest_result_status_idx").on(table.status),
+]);
+
+export const familyActivityDigestDelivery = familySchema.table("family_activity_digest_delivery", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  runId: uuid("run_id").notNull().references(() => familyActivityDigestRun.runId),
+  familyId: integer("fk_family_id").notNull().references(() => family.id, { onDelete: "cascade" }),
+  memberId: integer("fk_member_id").notNull().references(() => member.id, { onDelete: "cascade" }),
+  weekStartUtc: timestamp("week_start_utc", { withTimezone: true }).notNull(),
+  recipientEmail: text("recipient_email").notNull(),
+  providerMessageId: text("provider_message_id"),
+  status: text("status").$type<"sending" | "sent" | "failed" | "unknown">().notNull(),
+  attemptsInRun: integer("attempts_in_run").notNull().default(1),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  processedAt: timestamp("processed_at", { withTimezone: true }),
+}, (table) => [
+  unique("digest_delivery_family_week_member_uq").on(table.familyId, table.weekStartUtc, table.memberId),
+  index("digest_delivery_run_idx").on(table.runId),
+]);
 
 export const blogPost = familySchema.table("blog_post", {
   id: serial("id").primaryKey(),

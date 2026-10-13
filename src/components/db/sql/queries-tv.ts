@@ -1089,6 +1089,7 @@ export async function saveShow(
         actionType: FAMILY_ACTIVITY_ACTION_TYPES.POST_CREATED,
         featureName: "TV Room",
         postName: normalizedTitle,
+        postId: persistedShow.id,
         familyId: actor.familyId,
         memberId: actor.memberId,
       });

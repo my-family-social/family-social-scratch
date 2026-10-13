@@ -57,7 +57,8 @@ if (!familySocialDatabaseUrl) {
 	throw new Error("FAMILY_SOCIAL_DATABASE_URL or DATABASE_URL is required.");
 }
 
-const sql = neon(normalizeDatabaseUrl(familySocialDatabaseUrl));
+export const databaseConnectionString = normalizeDatabaseUrl(familySocialDatabaseUrl);
+const sql = neon(databaseConnectionString);
 export const db = drizzle(sql);
 
 export default db;

@@ -736,6 +736,7 @@ export async function createGalleryAlbum(
       actionType: FAMILY_ACTIVITY_ACTION_TYPES.POST_CREATED,
       featureName: "Family Gallery",
       postName: album.albumName,
+      postId: album.id,
       familyId: ctx.familyId,
       memberId: ctx.memberId,
     });
@@ -745,6 +746,7 @@ export async function createGalleryAlbum(
         actionType: FAMILY_ACTIVITY_ACTION_TYPES.ALBUM_SHARED,
         featureName: "Family Gallery",
         postName: album.albumName,
+        postId: album.id,
         familyId: ctx.familyId,
         memberId: ctx.memberId,
       });
@@ -817,6 +819,7 @@ export async function updateGalleryAlbum(
         actionType: FAMILY_ACTIVITY_ACTION_TYPES.ALBUM_SHARED,
         featureName: "Family Gallery",
         postName: input.albumName,
+        postId: input.id,
         familyId: ctx.familyId,
         memberId: ctx.memberId,
       });

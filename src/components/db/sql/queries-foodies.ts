@@ -992,6 +992,7 @@ export async function saveFoodiesRecipe(
         actionType: FAMILY_ACTIVITY_ACTION_TYPES.POST_CREATED,
         featureName: "The Kitchen",
         postName: normalizedTitle,
+        postId: savedRecipe.id,
         familyId: actor.familyId,
         memberId: actor.memberId,
       });
