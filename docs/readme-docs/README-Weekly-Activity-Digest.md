@@ -21,13 +21,23 @@
 6. Start the web app normally. Start the worker in a second terminal:
 
    ```powershell
-   npm run digest:worker -- --env-file=.env.google-local
+    npm run digest:worker -- --env-file=.env.google-local
    ```
 
+    To be safe, if you've made changes to the digest code, then it's just best to stop and start it with the command above. However, the `digest start` command below will start it in watch mode so that, as you make tsx changes during development, it will pick them up. 
+    ```powershell
+      npx tsx watch scripts\weekly-activity-digest-worker.ts --env-file=.env.google-local
+    ```
+
    Without `--env-file`, the worker loads Next.js's standard environment files. It does not implicitly load `.env.google-local`. Use `--once` to process one queued/interrupted run and exit. Use `--dry-run-only` to exclude live runs, and `--run-id=<uuid>` to target a particular queued/interrupted run. Production must supervise this worker separately; running only the web process will leave runs queued.
+   Restart the digest worker after changing its code as well as its environment. It does not hot-reload with the Next.js development server; an already-running worker continues using the modules loaded at startup.
 
 
 The kickoff is durable: 202 means a run was written to the database, not that emails were sent. The worker polls every five seconds, holds a PostgreSQL session advisory lock, and resumes runs left in `processing` after a restart. Only one worker operates at a time. It finishes the current run on a graceful shutdown; a hard shutdown is recoverable.
+
+Database polling failures use `logDbQueryError` with scope `weekly-activity-digest.getNextDigestRun`; advisory-lock connection errors use scope `weekly-activity-digest.worker.lockConnection`. Both produce structured `[DB_QUERY_FAILED]` console logs through the shared logger. Sentry delivery requires Sentry to be initialized in the standalone worker; Next.js server instrumentation does not automatically initialize a separate worker process.
+
+`ECONNRESET` on the lock connection or `fetch failed` during polling indicates a database/network connectivity failure, not necessarily invalid SQL. The worker exits on these failures rather than continuing without its advisory lock. Restart it after connectivity is restored (a deployed process supervisor can handle restarts). `tsx watch` reloads code changes, but is not a substitute for a supervisor that restarts crashed workers. Logging alone does not reconnect the database or retry sends. A run already logged as `Finished` is not made unsuccessful by a later idle polling failure; inspect its persisted run and delivery audit to confirm the outcome.
 
 ## SoapUI POST
 
@@ -102,10 +112,26 @@ Results include score, distinct posters, total weighted events, threshold, eligi
 
 ### Post cards
 
+The greeting displays the activity date range as `MM-DD-YY to MM-DD-YY`, without a UTC label. This is a display-only change; activity selection still uses the configured UTC week boundaries.
+
 Each card shows the room, the action, the member avatar (or initials), and the title. When the activity can be matched to its post, the card also shows the post image, a short excerpt, and like (👍), love (❤), and comment (💬) counts as of send time. Counts follow the room pages: the submitter's own rating is excluded, and reviewer, pro-tip, analysis, and deleted comments are not counted.
+
+Post artwork is displayed at 120px wide with its original aspect ratio; member avatars remain 28px beside the title. Book and poetry cards show their assigned category tags as room-colored labels in the same left-hand area instead of an image. The posting member's name appears below the title, followed by reaction counts, in the middle column rather than below the image. Tags are loaded at send time for visible posts only, sorted by name, with duplicate or blank names removed.
+
+The right side includes opening text from the post body (TV/movie/music content, book analysis, poem verse, recipe body, blog body, or album description), continuing across source lines and paragraphs to fill the preview area. Rich-text formatting and media are not included. An existing recipe/blog summary is used only when body text is unavailable. Previews wrap at an 18px line height and are clamped to eight lines (144px) with an ellipsis in supporting clients. A 280-character server-side limit, including an ellipsis when shortened, bounds the text even in clients that ignore CSS line clamping. Email clients vary in CSS support; the preview cannot dynamically measure the neighboring artwork's height. Empty previews are omitted; stored content and room pages are unchanged.
+
+Post titles link to their room homepage on the `AUTH_URL` host: `/tv`, `/movies`, `/music`, `/foodies`, `/poetry`, `/books`, `/blogs`, or `/family-gallery` (and `/threads` for Family Discussions). Room aliases such as Music Room/Music Salon and Home Theater/Movie Theater share the same destination. Unrecognized room names fall back to the application homepage. The bottom **Visit My Family Social** button still links to the application homepage, and `FS_EMAIL_IMAGE_BASE_URL` does not affect navigation links.
 
 - Matching: new activity rows store `post_id`. Rows recorded before the column existed are matched by member and title (blogs and gallery albums only); if no match is found, the card shows only the room, title, and member.
 - Visibility: draft, template, and private posts, unpublished blogs, and unshared albums never contribute an image, excerpt, or counts. Gallery cards use the album's first photo.
+- Music activity labeled either `Music Room` or `Music Salon` resolves to the same music posts and artwork, including legacy title-matched activity.
+- Movie activity labeled either `Home Theater` or `Movie Theater` resolves to the same movie posts.
+
+### New members
+
+When active `MEMBER_JOINED` activity exists within the digest week, a **New Members** section appears between New Posts and Family Dashboards. It joins the activity member ID to the same family's member record and displays each member once, ordered by name. Cards show the member's name and a 48px profile photo, or initials when no usable photo is available. Profile photos use the same signed-image handling as post-card avatars. No email addresses or other contact details are included. When nobody joined, the section is omitted.
+
+Membership events do not change the existing activity score, two-poster requirement, dashboard counts, or recipient eligibility. A week containing only membership events does not independently qualify for an email.
 
 ### Email images
 
@@ -116,7 +142,7 @@ S3 objects are never made public. When sending, each S3-hosted image is rewritte
 - 400: malformed or cross-family key
 - 404: signing not configured, or the object is not a raster image (SVG is refused)
 
-Valid images are streamed from the family's bucket with `Cache-Control: public, max-age=604800, immutable`. External image URLs are passed through unchanged.
+Valid images are streamed from the family's bucket with `Cache-Control: public, max-age=604800, immutable`. External image URLs are passed through unchanged, including public Spotify artwork (`https://i.scdn.co/image/`) and TMDB posters (`https://image.tmdb.org/`). These public URLs do not use `/api/email-image`, the signing secret, or `FS_EMAIL_IMAGE_BASE_URL`.
 
 For local email testing, Gmail and Resend cannot fetch images from a local-only host such as `local.my-family-social.com:3000`, even when that host works in your browser. Set `FS_EMAIL_IMAGE_BASE_URL` in the sending worker's environment to a public deployed app with `/api/email-image` installed. That app must use the **same** `FS_EMAIL_IMAGE_SIGNING_SECRET` as the sender and have access to the same family IDs, S3 configuration, and objects. Its logo and image route must be reachable without login or deployment access protection. Restart the worker after changing its environment. An image base URL is not a direct S3 bucket URL.
 

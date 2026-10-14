@@ -8,6 +8,7 @@ async function main() {
   if (envFile) process.loadEnvFile(resolve(envFile));
   else loadEnvConfig(process.cwd());
   const { databaseConnectionString } = await import("../src/components/db/drizzle");
+  const { logDbQueryError } = await import("../src/components/db/sql/db-error-logger");
   const { getNextDigestRun } = await import("../src/components/db/sql/queries-weekly-activity-digest");
   const { processDigestRun } = await import("../src/features/weekly-activity-digest/service");
   const runIdArg = process.argv.find((arg) => arg.startsWith("--run-id="))?.slice("--run-id=".length);
@@ -17,7 +18,9 @@ async function main() {
   let stopping = false;
   client.on("error", (error) => {
     healthy = false;
-    console.error("[weekly-activity-digest.worker] Lock connection lost", error);
+    logDbQueryError("weekly-activity-digest.worker.lockConnection", error, {
+      runId, phase: "lock-connection-lost",
+    });
   });
   process.on("SIGINT", () => { stopping = true; });
   process.on("SIGTERM", () => { stopping = true; });

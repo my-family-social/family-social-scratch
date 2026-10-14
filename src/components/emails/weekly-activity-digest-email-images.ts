@@ -26,6 +26,7 @@ export function withEmailImageUrls(digest: DigestActivity, siteUrl: string, now:
   const toUrl = (value: string | null) => buildEmailImageUrl({ siteUrl, familyId: digest.familyId, value, expiresAt, secret });
   return {
     ...digest,
+    newMembers: digest.newMembers.map((member) => ({ ...member, memberImageUrl: toUrl(member.memberImageUrl) })),
     highlights: digest.highlights.map((highlight) => ({
       ...highlight,
       memberImageUrl: toUrl(highlight.memberImageUrl),

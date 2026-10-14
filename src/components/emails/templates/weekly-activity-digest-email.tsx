@@ -30,6 +30,23 @@ const roomColors: Record<string, { border: string; background: string }> = {
   "family gallery": { border: "#3979aa", background: "#eff6ff" },
 };
 
+const roomPaths: Record<string, string> = {
+  "tv room": "/tv",
+  "movie theater": "/movies",
+  "home theater": "/movies",
+  "music salon": "/music",
+  "music room": "/music",
+  "the kitchen": "/foodies",
+  blogs: "/blogs",
+  "family blog": "/blogs",
+  "living room": "/blogs",
+  "poetry nook": "/poetry",
+  "reading room": "/books",
+  library: "/books",
+  "family gallery": "/family-gallery",
+  "family discussions": "/threads",
+};
+
 function dashboardRows(rows: { label: string; actionType: string; count: number }[]): DashboardRow[] {
   const grouped = new Map<string, DashboardRow>();
   for (const row of rows) {
@@ -112,16 +129,20 @@ const actionLabel = (actionType: string) => ({
   DISCUSS_START: "Started discussion",
 }[actionType] ?? actionType.toLowerCase().replaceAll("_", " "));
 
-const EXCERPT_MAX_LENGTH = 120;
+const EXCERPT_MAX_LENGTH = 280;
 
 function truncateExcerpt(value: string) {
   const normalized = value.replace(/\s+/g, " ").trim();
   if (normalized.length <= EXCERPT_MAX_LENGTH) return normalized;
-  return `${normalized.slice(0, EXCERPT_MAX_LENGTH).replace(/\s+\S*$/, "")} …`;
+  return `${normalized.slice(0, EXCERPT_MAX_LENGTH - 1).replace(/\s+\S*$/, "")}…`;
 }
 
 function initials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
+}
+
+function formatDigestDate(value: string) {
+  return `${value.slice(5, 7)}-${value.slice(8, 10)}-${value.slice(2, 4)}`;
 }
 
 function PostCounts({ post, color }: { post: DigestHighlightPost; color: string }) {
@@ -144,9 +165,11 @@ function PostCounts({ post, color }: { post: DigestHighlightPost; color: string 
 
 function PostCard({ entry, siteUrl }: { entry: DigestHighlight; siteUrl: string }) {
   const colors = roomColors[entry.featureName.toLowerCase()] ?? { border: "#3979aa", background: "#f8fbff" };
+  const roomPath = roomPaths[entry.featureName.toLowerCase()];
+  const roomUrl = roomPath ? new URL(roomPath, siteUrl).toString() : siteUrl;
   const post = entry.post;
   const imageUrl = post?.imageUrl ?? null;
-  const hasCounts = Boolean(post && post.likeCount + post.loveCount + post.commentCount > 0);
+  const tags = post?.tags ?? [];
   return (
     <Section style={{
       backgroundColor: colors.background,
@@ -154,17 +177,27 @@ function PostCard({ entry, siteUrl }: { entry: DigestHighlight; siteUrl: string 
       marginBottom: "10px",
       padding: "12px 14px",
     }}>
-      <table role="presentation" style={{ borderCollapse: "collapse", width: "100%" }}>
+      <table role="presentation" style={{ borderCollapse: "collapse", tableLayout: "fixed", width: "100%" }}>
         <tbody><tr>
-          {post && (imageUrl || hasCounts) ? (
-            <td style={{ paddingRight: "12px", verticalAlign: "top", width: "84px" }}>
+            <td style={{ paddingRight: "16px", verticalAlign: "top", width: "120px" }}>
               {imageUrl ? (
-                <Img src={imageUrl} alt={entry.postName} width="80" style={{ border: "0", display: "block", height: "auto", maxWidth: "80px" }} />
+                <Img src={imageUrl} alt={entry.postName} width="120" style={{ border: "0", display: "block", height: "auto", maxWidth: "120px" }} />
+              ) : tags.length > 0 ? (
+                <div style={{ width: "120px" }}>
+                  {tags.map((tag) => (
+                    <span key={tag} style={{
+                      backgroundColor: "#ffffff", border: `1px solid ${colors.border}`, borderRadius: "4px",
+                      color: colors.border, display: "inline-block", fontSize: "12px", lineHeight: "18px",
+                      margin: "0 4px 4px 0", maxWidth: "108px", overflowWrap: "anywhere", padding: "3px 5px",
+                    }}>{tag}</span>
+                  ))}
+                </div>
               ) : null}
-              <PostCounts post={post} color={colors.border} />
             </td>
-          ) : null}
           <td style={{ verticalAlign: "top" }}>
+            <table role="presentation" style={{ borderCollapse: "collapse", tableLayout: "fixed", width: "100%" }}>
+              <tbody><tr>
+                <td style={{ paddingRight: post?.excerpt ? "12px" : "0", verticalAlign: "top", width: post?.excerpt ? "45%" : "100%" }}>
             <Text style={{ color: colors.border, fontSize: "12px", fontWeight: "bold", margin: "0 0 6px" }}>
               {entry.featureName} · {actionLabel(entry.actionType)}
             </Text>
@@ -181,16 +214,24 @@ function PostCard({ entry, siteUrl }: { entry: DigestHighlight; siteUrl: string 
                   )}
                 </td>
                 <td style={{ verticalAlign: "middle" }}>
-                  <Link href={siteUrl} style={{ color: "#1f2937", fontSize: "16px", fontWeight: "bold", textDecoration: "underline" }}>
+                  <Link href={roomUrl} style={{ color: "#1f2937", fontSize: "16px", fontWeight: "bold", textDecoration: "underline" }}>
                     {entry.postName}
                   </Link>
                 </td>
               </tr></tbody>
             </table>
-            <Text style={{ color: "#475569", fontSize: "12px", margin: "4px 0 0" }}>Shared by {entry.memberName}</Text>
+              <Text style={{ color: "#475569", fontSize: "12px", lineHeight: "16px", margin: "6px 0 0", overflowWrap: "anywhere" }}>{entry.memberName}</Text>
+              {post ? <PostCounts post={post} color={colors.border} /> : null}
+                </td>
             {post?.excerpt ? (
-              <Text style={{ color: "#334155", fontSize: "13px", lineHeight: "18px", margin: "6px 0 0" }}>{truncateExcerpt(post.excerpt)}</Text>
+                <td style={{ verticalAlign: "top" }}>
+                  <div style={{ maxHeight: "144px", overflow: "hidden", display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 8 }}>
+                    <Text style={{ color: "#334155", fontSize: "13px", lineHeight: "18px", margin: "0", overflowWrap: "anywhere" }}>{truncateExcerpt(post.excerpt)}</Text>
+                  </div>
+                </td>
             ) : null}
+              </tr></tbody>
+            </table>
           </td>
         </tr></tbody>
       </table>
@@ -222,12 +263,37 @@ export default function WeeklyActivityDigestEmail({ digest, displayName, siteUrl
             <Img src={`${imageBaseUrl.replace(/\/$/, "")}/images/pwa-phone-logo-192.png`} alt="My Family Social" height="72" width="72" style={{ margin: "0 auto" }} />
             <Heading style={{ color: "#1e3a8a", fontSize: "28px", margin: "10px 0" }}>Weekly Activity</Heading>
           </Section>
-          <Text style={{ color: "#334155", fontSize: "15px" }}>Hello {displayName}! Here is what your family has been doing in My Family Social this week ({digest.weekStartUtc.slice(0, 10)} to {digest.weekEndUtc.slice(0, 10)} UTC).</Text>
+          <Text style={{ color: "#334155", fontSize: "15px" }}>Hello {displayName}! Here is what your family has been doing in My Family Social this week ({formatDigestDate(digest.weekStartUtc)} to {formatDigestDate(digest.weekEndUtc)}).</Text>
 
           <Heading as="h2" style={{ color: "#1e3a8a", fontSize: "22px", margin: "24px 0 12px" }}>New Posts</Heading>
           {digest.highlights.length ? digest.highlights.map((entry, index) => (
             <PostCard key={`${entry.memberName}-${entry.postName}-${index}`} entry={entry} siteUrl={siteUrl} />
           )) : <Text style={{ color: "#64748b" }}>No new posts were shared this week.</Text>}
+
+          {digest.newMembers.length > 0 ? (
+            <Section>
+              <Heading as="h2" style={{ color: "#1e3a8a", fontSize: "22px", margin: "26px 0 10px" }}>New Members</Heading>
+              {digest.newMembers.map((member) => (
+                <Section key={member.memberId} style={{ backgroundColor: "#eff6ff", border: "1px solid #bfdbfe", marginBottom: "10px", padding: "12px 14px" }}>
+                  <table role="presentation" style={{ borderCollapse: "collapse", width: "100%" }}>
+                    <tbody><tr>
+                      <td style={{ paddingRight: "12px", verticalAlign: "middle", width: "48px" }}>
+                        {member.memberImageUrl ? (
+                          <Img src={member.memberImageUrl} alt={member.memberName} width="48" height="48" style={{ borderRadius: "24px", display: "block" }} />
+                        ) : (
+                          <div style={{ backgroundColor: "#3478c8", borderRadius: "24px", color: "#ffffff", fontSize: "16px", fontWeight: "bold", height: "48px", lineHeight: "48px", textAlign: "center", width: "48px" }}>{initials(member.memberName)}</div>
+                        )}
+                      </td>
+                      <td style={{ verticalAlign: "middle" }}>
+                        <Text style={{ color: "#1e3a8a", fontSize: "16px", fontWeight: "bold", margin: "0" }}>{member.memberName}</Text>
+                        <Text style={{ color: "#475569", fontSize: "13px", margin: "2px 0 0" }}>Joined the family this week. Welcome!</Text>
+                      </td>
+                    </tr></tbody>
+                  </table>
+                </Section>
+              ))}
+            </Section>
+          ) : null}
 
           <Heading as="h2" style={{ color: "#1e3a8a", fontSize: "22px", margin: "26px 0 10px" }}>Family Dashboards</Heading>
           <Section style={{ marginBottom: "10px" }}>

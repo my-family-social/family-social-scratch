@@ -53,6 +53,7 @@ export type ActivityScore = {
 export type DigestHighlightPost = {
   /** Stored image value from the room (S3 key/app link/external URL); the email sender rewrites it to an email-safe URL. */
   imageUrl: string | null;
+  tags: string[];
   excerpt: string | null;
   likeCount: number;
   loveCount: number;
@@ -79,6 +80,7 @@ export type DigestActivity = {
   featureDashboard: { featureName: string; actionType: string; count: number }[];
   memberDashboard: { memberName: string; actionType: string; count: number }[];
   highlights: DigestHighlight[];
+  newMembers: { memberId: number; memberName: string; memberImageUrl: string | null }[];
 };
 
 export function getConfiguredThreshold(): number {

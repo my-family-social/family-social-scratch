@@ -9,6 +9,7 @@ vi.mock("resend", () => ({ Resend: class { emails = { send }; } }));
 import { sendWeeklyActivityDigestEmail } from "./send-weekly-activity-digest-email";
 const recipient = { memberId: 1, displayName: "Test Member", email: "member@example.com" };
 const digest: DigestActivity = {
+  newMembers: [],
   familyId: 7, familyName: "Test", weekStartUtc: "2026-10-05T00:00:00Z", weekEndUtc: "2026-10-11T23:59:59.999Z",
   topMembers: [{ displayName: "Test Member", count: 3 }], byActionType: [{ name: "POST_CREATED", count: 3 }],
   byFeature: [{ name: "Blogs", count: 3 }],
@@ -19,7 +20,7 @@ const digest: DigestActivity = {
     {
       memberName: "Movie Fan", memberImageUrl: "/api/s3-upload?key=members%2Favatar.png", actionType: "POST_CREATED",
       featureName: "Movie Theater", postName: "Robin Hood",
-      post: { imageUrl: "https://image.tmdb.org/t/p/w500/poster.jpg", excerpt: "A spoof of Robin Hood.", likeCount: 3, loveCount: 2, commentCount: 1 },
+      post: { imageUrl: "https://image.tmdb.org/t/p/w500/poster.jpg", tags: [], excerpt: "A spoof of Robin Hood.", likeCount: 3, loveCount: 2, commentCount: 1 },
     },
   ],
 };
@@ -85,8 +86,46 @@ describe("weekly digest email", () => {
     expect(html).toContain("https://example.com");
     expect(html).toContain("Visit My Family Social");
     expect(html).toContain("Activity Summary");
+    expect(html).toContain("10-05-26");
+    expect(html).toContain("10-11-26");
+    expect(html).not.toContain("10-05-2026");
+    expect(html).not.toContain("10-11-2026");
+    expect(html).not.toContain("UTC");
+    expect(html).not.toContain("2026-10-05");
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
+  });
+  it.each([
+    ["TV Room", "/tv"],
+    ["Movie Theater", "/movies"],
+    ["Home Theater", "/movies"],
+    ["Music Salon", "/music"],
+    ["Music Room", "/music"],
+    ["The Kitchen", "/foodies"],
+    ["Poetry Nook", "/poetry"],
+    ["Reading Room", "/books"],
+    ["Library", "/books"],
+    ["Blogs", "/blogs"],
+    ["Family Blog", "/blogs"],
+    ["Living Room", "/blogs"],
+    ["Family Gallery", "/family-gallery"],
+    ["Family Discussions", "/threads"],
+    ["Unknown Room", ""],
+  ])("links %s post titles to their room while preserving the homepage button", async (featureName, path) => {
+    const siteUrl = "https://family.example.com:3000";
+    const html = await render(createElement(WeeklyActivityDigestEmail, {
+      digest: {
+        ...digest,
+        highlights: [{
+          memberName: "Test Member", memberImageUrl: null, actionType: "POST_CREATED",
+          featureName, postName: "Room link test", post: null,
+        }],
+      },
+      displayName: recipient.displayName, siteUrl, imageBaseUrl: "https://images.example.com",
+    }));
+    expect(html).toMatch(new RegExp(`href="${siteUrl.replaceAll(".", "\\.")}${path}"[^>]*>Room link test</a>`));
+    expect(html).toContain(`href="${siteUrl}"`);
+    expect(html).not.toContain(`href="https://images.example.com${path}"`);
   });
   it("renders post images, avatars, excerpts, and like/love/comment counts", async () => {
     const html = await render(createElement(WeeklyActivityDigestEmail, { digest, displayName: recipient.displayName, siteUrl: "https://example.com" }));
@@ -96,6 +135,113 @@ describe("weekly digest email", () => {
     expect(html).toContain("2 loves");
     expect(html).toContain("1 comment\"");
     expect(html).toContain("TM");
+    expect(html).toMatch(/<img[^>]*alt="Robin Hood"[^>]*max-width:120px[^>]*width="120"/);
+    expect(html).toMatch(/<img[^>]*alt="Movie Fan"[^>]*width="28"/);
+  });
+  it("renders new members between posts and dashboards with signed photos or initials", async () => {
+    vi.stubEnv("FS_EMAIL_IMAGE_SIGNING_SECRET", SECRET);
+    vi.stubEnv("FS_EMAIL_IMAGE_BASE_URL", "https://public.example.com");
+    send.mockResolvedValue({ data: { id: "message" }, error: null });
+    const memberDigest: DigestActivity = {
+      ...digest,
+      newMembers: [
+        { memberId: 40, memberName: "New Arrival", memberImageUrl: "family-7/members/new.jpg" },
+        { memberId: 41, memberName: "<script>Guest</script> Member", memberImageUrl: null },
+      ],
+    };
+    await sendWeeklyActivityDigestEmail(recipient, memberDigest, "key");
+    const email = send.mock.calls[0]?.[0].react;
+    const sentDigest = email.props.digest as DigestActivity;
+    const photo = new URL(sentDigest.newMembers[0]!.memberImageUrl!);
+    expect(photo.origin + photo.pathname).toBe("https://public.example.com/api/email-image");
+    expect(photo.searchParams.get("k")).toBe("family-7/members/new.jpg");
+    expect(sentDigest.newMembers[1]?.memberImageUrl).toBeNull();
+    expect(memberDigest.newMembers[0]?.memberImageUrl).toBe("family-7/members/new.jpg");
+    const html = await render(email);
+    expect(html.indexOf("New Members</h2>")).toBeGreaterThan(html.indexOf("New Posts</h2>"));
+    expect(html.indexOf("New Members</h2>")).toBeLessThan(html.indexOf("Family Dashboards</h2>"));
+    expect(html).toMatch(/<img[^>]*alt="New Arrival"[^>]*width="48"/);
+    expect(html).toContain("&lt;script&gt;Guest&lt;/script&gt; Member");
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("Joined the family this week. Welcome!");
+  });
+  it("omits the new members section when no members joined", async () => {
+    const html = await render(createElement(WeeklyActivityDigestEmail, {
+      digest, displayName: recipient.displayName, siteUrl: "https://example.com",
+    }));
+    expect(html).not.toContain("New Members");
+  });
+  it("bounds multiline right-hand previews with an ellipsis and a 280-character fallback limit", async () => {
+    const longLine = "A long opening sentence with useful details. ".repeat(10);
+    const html = await render(createElement(WeeklyActivityDigestEmail, {
+      digest: {
+        ...digest,
+        highlights: [{
+          ...digest.highlights[1]!,
+          post: { imageUrl: null, tags: [], excerpt: `${longLine}\nHidden second line`, likeCount: 0, loveCount: 0, commentCount: 0 },
+        }],
+      },
+      displayName: recipient.displayName, siteUrl: "https://example.com",
+    }));
+    const preview = html.match(/<div style="max-height:144px;[^"]*"><p[^>]*>([^<]*)<\/p>/);
+    expect(preview).not.toBeNull();
+    expect(preview?.[1]?.length).toBeLessThanOrEqual(280);
+    expect(preview?.[1]).toMatch(/…$/);
+    expect(preview?.[0]).toContain("line-height:18px");
+    expect(preview?.[0]).toContain("overflow-wrap:anywhere");
+    expect(preview?.[0]).not.toContain("white-space:nowrap");
+    expect(preview?.[0]).toContain("-webkit-line-clamp:8");
+    expect(html.indexOf(preview![0])).toBeGreaterThan(html.indexOf("Robin Hood</a>"));
+    expect(html).not.toContain("Hidden second line");
+    expect(html).toContain("table-layout:fixed");
+  });
+  it("places the author and counts below the title, not below artwork", async () => {
+    const html = await render(createElement(WeeklyActivityDigestEmail, {
+      digest: { ...digest, highlights: [digest.highlights[1]!] },
+      displayName: recipient.displayName, siteUrl: "https://example.com",
+    }));
+    const artwork = html.indexOf('alt="Robin Hood"');
+    const author = html.indexOf("Movie Fan</p>");
+    const reactions = html.indexOf('title="3 likes"');
+    const avatar = html.indexOf('alt="Movie Fan"');
+    const title = html.indexOf("Robin Hood</a>");
+    expect(artwork).toBeGreaterThan(-1);
+    expect(author).toBeGreaterThan(artwork);
+    expect(reactions).toBeGreaterThan(author);
+    expect(avatar).toBeGreaterThan(artwork);
+    expect(title).toBeGreaterThan(avatar);
+    expect(author).toBeGreaterThan(title);
+    expect(html).not.toContain("Shared by");
+    expect(html.indexOf("A spoof of Robin Hood.")).toBeGreaterThan(title);
+  });
+  it("continues the preview across source lines instead of stopping after the opening line", async () => {
+    const html = await render(createElement(WeeklyActivityDigestEmail, {
+      digest: { ...digest, highlights: [{
+        ...digest.highlights[1]!,
+        post: { ...digest.highlights[1]!.post!, excerpt: "Opening line.\nMore text from the post.\nAnother line." },
+      }] },
+      displayName: recipient.displayName, siteUrl: "https://example.com",
+    }));
+    expect(html).toContain("Opening line. More text from the post. Another line.");
+  });
+  it.each(["Reading Room", "Poetry Nook"])("shows %s tags in the left column even without images or reactions", async (featureName) => {
+    const taggedDigest: DigestActivity = {
+      ...digest,
+      highlights: [{
+        memberName: "Test Member", memberImageUrl: null, actionType: "POST_CREATED",
+        featureName, postName: "Tagged post",
+        post: { imageUrl: null, tags: ["Nature", "<script>Literary</script>"], excerpt: null, likeCount: 0, loveCount: 0, commentCount: 0 },
+      }],
+    };
+    const html = await render(createElement(WeeklyActivityDigestEmail, {
+      digest: taggedDigest, displayName: recipient.displayName, siteUrl: "https://example.com",
+    }));
+    expect(html).toContain("width:120px");
+    expect(html).toContain("Nature</span>");
+    expect(html).toContain("&lt;script&gt;Literary&lt;/script&gt;</span>");
+    expect(html.indexOf("Nature</span>")).toBeLessThan(html.indexOf("Tagged post</a>"));
+    expect(html).not.toContain('alt="Tagged post"');
+    expect(html).not.toContain("<script>");
   });
   it("rewrites private S3 images to signed email-image links before sending", async () => {
     vi.stubEnv("AUTH_URL", "https://family.example.com");
@@ -117,6 +263,26 @@ describe("weekly digest email", () => {
     const sentDigest = send.mock.calls[0]?.[0].react.props.digest as DigestActivity;
     expect(sentDigest.highlights[1]?.memberImageUrl).toBeNull();
     expect(sentDigest.highlights[1]?.post?.imageUrl).toBe("https://image.tmdb.org/t/p/w500/poster.jpg");
+  });
+  it.each([
+    ["Music Room", "https://i.scdn.co/image/ab67616d00001e028c1029772ceac2ab96593eaa"],
+    ["Home Theater", "https://image.tmdb.org/t/p/w780/qmliLoo6GVheM2FihatlAXxCKyF.jpg"],
+  ])("renders public %s artwork directly in the sent HTML", async (featureName, imageUrl) => {
+    vi.stubEnv("FS_EMAIL_IMAGE_SIGNING_SECRET", "");
+    vi.stubEnv("FS_EMAIL_IMAGE_BASE_URL", "https://public.example.com");
+    send.mockResolvedValue({ data: { id: "message" }, error: null });
+    const publicImageDigest: DigestActivity = {
+      ...digest,
+      highlights: [{
+        memberName: "Test Member", memberImageUrl: null, actionType: "POST_CREATED",
+        featureName, postName: "Public artwork",
+        post: { imageUrl, tags: [], excerpt: null, likeCount: 0, loveCount: 0, commentCount: 0 },
+      }],
+    };
+    expect(await sendWeeklyActivityDigestEmail(recipient, publicImageDigest, "key")).toMatchObject({ status: "sent" });
+    const html = await render(send.mock.calls[0]?.[0].react);
+    expect(html).toContain(`src="${imageUrl}"`);
+    expect(html).not.toContain("/api/email-image");
   });
   it("uses the public image host for the logo and signed images but keeps links on AUTH_URL", async () => {
     vi.stubEnv("AUTH_URL", "https://local.my-family-social.com:3000");

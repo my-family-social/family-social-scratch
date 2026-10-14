@@ -53,6 +53,14 @@ describe.skipIf(!enabled)("weekly digest PostgreSQL integration (rolled-back fix
         activity(first.id, bob.id, "POST_CREATED", new Date(end.getTime() + 1)),
         activity(first.id, alice.id, "POST_CREATED", start, "deleted"),
         activity(first.id, bob.id, "GAME_STARTED"), activity(first.id, null, "INVITE_SENT"),
+        activity(first.id, alice.id, "MEMBER_JOINED"),
+        activity(first.id, alice.id, "MEMBER_JOINED", end),
+        activity(first.id, bob.id, "MEMBER_JOINED", new Date(start.getTime() - 1)),
+        activity(first.id, bob.id, "MEMBER_JOINED", new Date(end.getTime() + 1)),
+        activity(first.id, bob.id, "MEMBER_JOINED", start, "deleted"),
+        activity(first.id, carol.id, "MEMBER_JOINED"),
+        activity(second.id, bob.id, "MEMBER_JOINED"),
+        activity(first.id, null, "MEMBER_JOINED"),
         activity(second.id, carol.id, "LIKE_ADDED"), activity(second.id, carol.id, "LIKE_ADDED"),
         ...Array.from({ length: 5 }, () => activity(solo.id, alice.id, "POST_CREATED")),
         ...["POST_CREATED", "COMMENT_CREATED", "DISCUSS_START", "DISCUSS_REPLY", "THREAD_CREATED",
@@ -95,6 +103,9 @@ describe.skipIf(!enabled)("weekly digest PostgreSQL integration (rolled-back fix
       expect(content.byFeature).toEqual([{ name: "Blogs", count: 16 }]);
       expect(content.highlights).toHaveLength(14);
       expect(content.familyId).toBe(first.id);
+      expect(content.newMembers).toEqual([
+        { memberId: alice.id, memberName: "Alice Tester", memberImageUrl: null },
+      ]);
       expect(content.highlights.every((entry) => entry.memberName.endsWith("Tester"))).toBe(true);
       // Fixture activity has no matching blog post, so cards render without post details.
       expect(content.highlights.every((entry) => entry.post === null && "memberImageUrl" in entry)).toBe(true);

@@ -27,7 +27,7 @@ const score = { activityScore: 12, uniquePosters: 2, totalEvents: 5, thresholdMe
 const recipients = [{ memberId: 1, email: "member@example.com", displayName: "Test Member" }];
 const digest = {
   familyId: 1, familyName: "Test", weekStartUtc: run.weekStartUtc.toISOString(), weekEndUtc: run.weekEndUtc.toISOString(),
-  topMembers: [], byActionType: [], byFeature: [], featureDashboard: [], memberDashboard: [], highlights: [],
+  topMembers: [], byActionType: [], byFeature: [], featureDashboard: [], memberDashboard: [], highlights: [], newMembers: [],
 };
 
 describe("durable digest orchestration", () => {

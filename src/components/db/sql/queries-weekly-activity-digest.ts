@@ -10,6 +10,7 @@ import {
 import { memberOptionReference } from "@/components/db/schema/global-schema-tables";
 import { ACTIVITY_WEIGHTS, MIN_UNIQUE_POSTERS, type ActivityScore, type DigestActivity, type Recipient } from "@/features/weekly-activity-digest/contract";
 import { digestPostRefKey, resolveDigestPostDetails } from "./queries-weekly-activity-digest-posts";
+import { logDbQueryError } from "./db-error-logger";
 
 const weights = sql.join(Object.entries(ACTIVITY_WEIGHTS).map(([action, weight]) => sql`(${action}, ${weight}::integer)`), sql`, `);
 const weekFilter = (start: Date, end: Date) => sql`
@@ -78,7 +79,7 @@ export async function collectFamilyDigestActivity(familyId: number, start: Date,
   if (!familyRow) throw new Error(`Family ${familyId} no longer exists.`);
   const dashboardActions = ["POST_CREATED", "COMMENT_CREATED", "LIKE_ADDED", "LOVE_ADDED"];
   const normalizedFeatureName = sql<string>`CASE WHEN ${familyActivity.featureName} = 'Family Blog' THEN 'Blogs' ELSE ${familyActivity.featureName} END`;
-  const [topMembers, byActionType, byFeature, featureDashboard, memberDashboard, highlights] = await Promise.all([
+  const [topMembers, byActionType, byFeature, featureDashboard, memberDashboard, highlights, newMembers] = await Promise.all([
     db.select({ firstName: member.firstName, lastName: member.lastName, count: count() })
       .from(familyActivity).innerJoin(member, and(eq(familyActivity.memberId, member.id), eq(member.familyId, familyId)))
       .where(filter).groupBy(member.id, member.firstName, member.lastName).orderBy(desc(count()), asc(member.id)).limit(5),
@@ -103,12 +104,23 @@ export async function collectFamilyDigestActivity(familyId: number, start: Date,
       .from(familyActivity).innerJoin(member, and(eq(familyActivity.memberId, member.id), eq(member.familyId, familyId)))
       .where(and(filter, inArray(familyActivity.actionType, ["POST_CREATED", "ALBUM_SHARED", "DISCUSS_START"])))
       .orderBy(desc(familyActivity.createdAt), desc(familyActivity.id)),
+    db.selectDistinct({
+      memberId: member.id, firstName: member.firstName, lastName: member.lastName,
+      memberImageUrl: member.memberImageUrl,
+    }).from(familyActivity)
+      .innerJoin(member, and(eq(familyActivity.memberId, member.id), eq(member.familyId, familyId)))
+      .where(and(eq(familyActivity.familyId, familyId), weekFilter(start, end),
+        eq(familyActivity.actionType, "MEMBER_JOINED")))
+      .orderBy(asc(member.firstName), asc(member.lastName), asc(member.id)),
   ]);
   const postDetails = await resolveDigestPostDetails(familyId, highlights);
   return {
     familyId, familyName: familyRow.name, weekStartUtc: start.toISOString(), weekEndUtc: end.toISOString(),
     topMembers: topMembers.map((row) => ({ displayName: `${row.firstName} ${row.lastName}`, count: row.count })),
     byActionType, byFeature, featureDashboard, memberDashboard,
+    newMembers: newMembers.map((row) => ({
+      memberId: row.memberId, memberName: `${row.firstName} ${row.lastName}`, memberImageUrl: row.memberImageUrl,
+    })),
     highlights: highlights.map((row) => {
       const details = postDetails.get(digestPostRefKey(row));
       return {
@@ -118,7 +130,7 @@ export async function collectFamilyDigestActivity(familyId: number, start: Date,
         featureName: row.featureName,
         postName: row.postName,
         post: details ? {
-          imageUrl: details.imageValue, excerpt: details.excerpt,
+          imageUrl: details.imageValue, tags: details.tags, excerpt: details.excerpt,
           likeCount: details.likeCount, loveCount: details.loveCount, commentCount: details.commentCount,
         } : null,
       };
@@ -227,11 +239,18 @@ export async function finishDigestRun(runId: string, errorMessage?: string) {
 }
 
 export async function getNextDigestRun(input: { runId?: string; dryRunOnly?: boolean } = {}): Promise<DigestRun | undefined> {
-  const [row] = await db.select().from(runs).where(and(
-    inArray(runs.status, ["queued", "processing"]),
-    input.runId ? eq(runs.runId, input.runId) : undefined,
-    input.dryRunOnly ? eq(runs.dryRun, true) : undefined,
-  ))
-    .orderBy(runs.createdAt, runs.id).limit(1);
-  return row;
+  try {
+    const [row] = await db.select().from(runs).where(and(
+      inArray(runs.status, ["queued", "processing"]),
+      input.runId ? eq(runs.runId, input.runId) : undefined,
+      input.dryRunOnly ? eq(runs.dryRun, true) : undefined,
+    ))
+      .orderBy(runs.createdAt, runs.id).limit(1);
+    return row;
+  } catch (error) {
+    logDbQueryError("weekly-activity-digest.getNextDigestRun", error, {
+      runId: input.runId, dryRunOnly: input.dryRunOnly ?? false,
+    });
+    throw error;
+  }
 }

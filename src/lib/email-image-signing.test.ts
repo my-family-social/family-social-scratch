@@ -32,6 +32,16 @@ describe("email image signing", () => {
     expect(getEmailImageSigningSecret()).toBe(SECRET);
   });
 
+  it.each([
+    "https://i.scdn.co/image/ab67616d00001e028c1029772ceac2ab96593eaa",
+    "https://image.tmdb.org/t/p/w780/qmliLoo6GVheM2FihatlAXxCKyF.jpg",
+  ])("keeps public artwork unchanged without S3 signing: %s", (value) => {
+    expect(resolveEmailImageSource(value)).toEqual({ kind: "external", url: value });
+    expect(buildEmailImageUrl({
+      siteUrl: "https://app.example.com", familyId: 28, value, expiresAt, secret: null,
+    })).toBe(value);
+  });
+
   it("builds verifiable signed links and passes external URLs through", () => {
     const url = new URL(buildEmailImageUrl({ siteUrl: "https://app.example.com", familyId: 3, value: "movies/poster.jpg", expiresAt, secret: SECRET }) ?? "");
     expect(url.pathname).toBe("/api/email-image");
