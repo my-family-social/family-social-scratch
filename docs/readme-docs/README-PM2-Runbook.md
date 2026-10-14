@@ -9,6 +9,7 @@
 - [Final Deploy Runbook](#final-deploy-runbook)
   - [Deploy](#deploy)
   - [Verify](#verify)
+  - [Verify Activity Digest Worker](#verify-activity-digest-worker)
   - [Rollback](#rollback)
   - [Known-Good Baseline (Do Not Drift)](#known-good-baseline-do-not-drift)
     - [ecosystem.config.cjs](#ecosystemconfigcjs)
@@ -204,12 +205,24 @@ In the `npm run build` command below, it is first necessary to retrieve the fami
 
 ## Verify
 ```bash
-sudo systemctl status pm2-ec2-user.service --no-pager -l
-pm2 status
-pm2 logs family-social --err --lines 60
-curl -I --max-time 10 http://127.0.0.1:3000
-curl -I --max-time 10 https://dev.my-family-social.com
+    sudo systemctl status pm2-ec2-user.service --no-pager -l
+    pm2 status
+    pm2 logs family-social --err --lines 60
+    curl -I --max-time 10 http://127.0.0.1:3000
+    curl -I --max-time 10 https://dev.my-family-social.com
 ```
+
+## Verify Activity Digest Worker
+There is a worker that is invoked from a REST API to produce the weekly activity digest. The commands below will not only confirm the web app startup but also the activity digest worker. 
+
+```bash
+    sudo systemctl restart pm2-ec2-user.service
+    sudo systemctl status pm2-ec2-user.service --no-pager -l
+    pm2 status
+    pm2 logs family-social-digest --lines 60 --nostream
+```
+
+**FYI**: here is where the web app and the digest worker are configured: `cat /home/ec2-user/projects/family-social/ecosystem.config.cjs`
 
 ## Rollback
 ```bash
