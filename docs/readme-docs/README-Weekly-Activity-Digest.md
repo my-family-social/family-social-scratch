@@ -1,4 +1,13 @@
-# Weekly activity digest
+- [Setup](#setup)
+- [SoapUI POST](#soapui-post)
+  - [Import the WADL](#import-the-wadl)
+- [Scoring and content](#scoring-and-content)
+  - [Post cards](#post-cards)
+  - [New members](#new-members)
+  - [Email images](#email-images)
+- [Replay and audit](#replay-and-audit)
+- [Validation and rollout](#validation-and-rollout)
+- [Local and AWS Digest Workers](#local-and-aws-digest-workers)
 
 ## Setup
 
@@ -127,6 +136,8 @@ Post titles link to their room homepage on the `AUTH_URL` host: `/tv`, `/movies`
 - Music activity labeled either `Music Room` or `Music Salon` resolves to the same music posts and artwork, including legacy title-matched activity.
 - Movie activity labeled either `Home Theater` or `Movie Theater` resolves to the same movie posts.
 
+On phone screens up to 480px wide, the post preview moves to a separate full-width row in the outer card table, spanning both the artwork/tags and title/member/reaction columns. Desktop and tablet layouts retain the side-by-side preview. The same truncated text is rendered in mutually exclusive desktop/mobile areas; clients without media-query support retain the desktop fallback.
+
 ### New members
 
 When active `MEMBER_JOINED` activity exists within the digest week, a **New Members** section appears between New Posts and Family Dashboards. It joins the activity member ID to the same family's member record and displays each member once, ordered by name. Cards show the member's name and a 48px profile photo, or initials when no usable photo is available. Profile photos use the same signed-image handling as post-card avatars. No email addresses or other contact details are included. When nobody joined, the section is omitted.
@@ -201,3 +212,22 @@ node --env-file=.env.google-local node_modules\vitest\vitest.mjs run src\compone
 ```
 
 Start with dry runs for one or two weeks to calibrate the threshold. EventBridge configuration, retries/DLQ, CloudWatch alarms, and any future SQS fan-out are separate deployment work. Internal authentication is reusable for future internal routes; family-level operations are service functions, not additional HTTP endpoints.
+
+## Local and AWS Digest Workers
+The POST’s destination determines where the request is accepted—not which worker processes it. The flow is:
+
+POST to dev server
+        ↓
+Run saved in the shared database
+        ↓
+Worker holding the database lock picks it up
+        ↓
+Email generated using that worker’s environment
+
+So if you have both a local digest worker started and an AWS one running, depending on the REST request that you run, it may process in the local environment as opposed to the AWS environment. It all depends on who had the last lock on the database. 
+
+Going forward
+- With a shared database: run only the AWS worker, or deliberately stop it before testing a local worker.
+- For independent local and AWS testing: use separate databases so each environment has its own queue and lock.
+  
+Changing the REST hostname alone does not isolate the workers.

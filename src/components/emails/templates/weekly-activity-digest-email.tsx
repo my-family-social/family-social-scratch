@@ -163,6 +163,14 @@ function PostCounts({ post, color }: { post: DigestHighlightPost; color: string 
   );
 }
 
+function PostPreview({ excerpt }: { excerpt: string }) {
+  return (
+    <div style={{ maxHeight: "144px", overflow: "hidden", display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 8 }}>
+      <Text style={{ color: "#334155", fontSize: "13px", lineHeight: "18px", margin: "0", overflowWrap: "anywhere" }}>{truncateExcerpt(excerpt)}</Text>
+    </div>
+  );
+}
+
 function PostCard({ entry, siteUrl }: { entry: DigestHighlight; siteUrl: string }) {
   const colors = roomColors[entry.featureName.toLowerCase()] ?? { border: "#3979aa", background: "#f8fbff" };
   const roomPath = roomPaths[entry.featureName.toLowerCase()];
@@ -197,7 +205,7 @@ function PostCard({ entry, siteUrl }: { entry: DigestHighlight; siteUrl: string 
           <td style={{ verticalAlign: "top" }}>
             <table role="presentation" style={{ borderCollapse: "collapse", tableLayout: "fixed", width: "100%" }}>
               <tbody><tr>
-                <td style={{ paddingRight: post?.excerpt ? "12px" : "0", verticalAlign: "top", width: post?.excerpt ? "45%" : "100%" }}>
+                <td className="digest-post-details" style={{ paddingRight: post?.excerpt ? "12px" : "0", verticalAlign: "top", width: post?.excerpt ? "45%" : "100%" }}>
             <Text style={{ color: colors.border, fontSize: "12px", fontWeight: "bold", margin: "0 0 6px" }}>
               {entry.featureName} · {actionLabel(entry.actionType)}
             </Text>
@@ -224,16 +232,22 @@ function PostCard({ entry, siteUrl }: { entry: DigestHighlight; siteUrl: string 
               {post ? <PostCounts post={post} color={colors.border} /> : null}
                 </td>
             {post?.excerpt ? (
-                <td style={{ verticalAlign: "top" }}>
-                  <div style={{ maxHeight: "144px", overflow: "hidden", display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 8 }}>
-                    <Text style={{ color: "#334155", fontSize: "13px", lineHeight: "18px", margin: "0", overflowWrap: "anywhere" }}>{truncateExcerpt(post.excerpt)}</Text>
-                  </div>
+                <td className="digest-post-preview-desktop" style={{ verticalAlign: "top" }}>
+                  <PostPreview excerpt={post.excerpt} />
                 </td>
             ) : null}
               </tr></tbody>
             </table>
           </td>
-        </tr></tbody>
+        </tr>
+          {post?.excerpt ? (
+            <tr className="digest-post-preview-mobile" style={{ display: "none" }}>
+              <td colSpan={2} style={{ paddingTop: "12px" }}>
+                <PostPreview excerpt={post.excerpt} />
+              </td>
+            </tr>
+          ) : null}
+        </tbody>
       </table>
     </Section>
   );
@@ -255,7 +269,16 @@ export default function WeeklyActivityDigestEmail({ digest, displayName, siteUrl
 
   return (
     <Html>
-      <Head />
+      <Head>
+        <style>{`
+          .digest-post-preview-mobile { mso-hide: all; }
+          @media only screen and (max-width: 480px) {
+            .digest-post-details { width: 100% !important; padding-right: 0 !important; }
+            .digest-post-preview-desktop { display: none !important; }
+            .digest-post-preview-mobile { display: table-row !important; }
+          }
+        `}</style>
+      </Head>
       <Preview>See what your family shared this week.</Preview>
       <Body style={{ backgroundColor: "#eff6ff", color: "#1e3a8a", fontFamily: "Arial, sans-serif", margin: 0 }}>
         <Container style={{ backgroundColor: "#ffffff", margin: "0 auto", maxWidth: "600px", padding: "24px" }}>

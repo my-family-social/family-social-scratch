@@ -224,6 +224,35 @@ describe("weekly digest email", () => {
     }));
     expect(html).toContain("Opening line. More text from the post. Another line.");
   });
+  it("stacks the preview in a full-width row on phones without changing desktop layout", async () => {
+    const html = await render(createElement(WeeklyActivityDigestEmail, {
+      digest: { ...digest, highlights: [digest.highlights[1]!] },
+      displayName: recipient.displayName, siteUrl: "https://example.com",
+    }));
+    expect(html).toContain("(max-width: 480px)");
+    expect(html).toContain(".digest-post-details { width: 100% !important; padding-right: 0 !important; }");
+    expect(html).toContain(".digest-post-preview-desktop { display: none !important; }");
+    expect(html).toContain(".digest-post-preview-mobile { display: table-row !important; }");
+    expect(html).toMatch(/<td class="digest-post-preview-desktop"[^>]*>/);
+    expect(html).toMatch(/<tr class="digest-post-preview-mobile" style="display:none[^"]*"><td colSpan="2"/);
+    expect(html.match(/A spoof of Robin Hood\./g)).toHaveLength(2);
+    const tables: number[] = [];
+    let nextTableId = 0;
+    let artworkTable: number | undefined;
+    let mobilePreviewTable: number | undefined;
+    for (const match of html.matchAll(/<table\b[^>]*>|<\/table>|<img\b[^>]*>|<tr\b[^>]*>/g)) {
+      const tag = match[0];
+      if (tag.startsWith("<table")) tables.push(++nextTableId);
+      else if (tag === "</table>") tables.pop();
+      else if (tag.startsWith("<img") && tag.includes('alt="Robin Hood"')) {
+        artworkTable = tables[tables.length - 1];
+      } else if (tag.startsWith("<tr") && tag.includes('class="digest-post-preview-mobile"')) {
+        mobilePreviewTable = tables[tables.length - 1];
+      }
+    }
+    expect(artworkTable).toBeDefined();
+    expect(mobilePreviewTable).toBe(artworkTable);
+  });
   it.each(["Reading Room", "Poetry Nook"])("shows %s tags in the left column even without images or reactions", async (featureName) => {
     const taggedDigest: DigestActivity = {
       ...digest,
