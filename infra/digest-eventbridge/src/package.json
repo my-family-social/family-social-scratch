@@ -1,0 +1,8 @@
+{
+  "name": "family-social-digest-kickoff",
+  "version": "1.0.0",
+  "private": true,
+  "description": "EventBridge Scheduler target that queues the weekly activity digest run.",
+  "type": "module",
+  "main": "index.mjs"
+}

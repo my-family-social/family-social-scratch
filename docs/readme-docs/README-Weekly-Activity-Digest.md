@@ -7,7 +7,25 @@
   - [Email images](#email-images)
 - [Replay and audit](#replay-and-audit)
 - [Validation and rollout](#validation-and-rollout)
+- [Scheduled kickoff (EventBridge)](#scheduled-kickoff-eventbridge)
+  - [How it works](#how-it-works)
+  - [Files](#files)
+  - [Prerequisites](#prerequisites)
+  - [Configure](#configure)
+  - [Build, validate, and deploy](#build-validate-and-deploy)
+  - [Test after deploying](#test-after-deploying)
+  - [Operations](#operations)
+  - [Changing or removing the stack](#changing-or-removing-the-stack)
 - [Local and AWS Digest Workers](#local-and-aws-digest-workers)
+- [Testing Digest Worker Changes](#testing-digest-worker-changes)
+  - [Pre-Testing](#pre-testing)
+    - [Neon](#neon)
+    - [EC2](#ec2)
+    - [VS Code Terminal](#vs-code-terminal)
+  - [Post-Testing](#post-testing)
+    - [VS Code Terminal](#vs-code-terminal-1)
+    - [EC2](#ec2-1)
+    - [Neon](#neon-1)
 
 ## Setup
 
@@ -211,7 +229,162 @@ $env:FS_DIGEST_DB_TESTS = "1"
 node --env-file=.env.google-local node_modules\vitest\vitest.mjs run src\components\db\sql\queries-weekly-activity-digest.integration.test.ts
 ```
 
-Start with dry runs for one or two weeks to calibrate the threshold. EventBridge configuration, retries/DLQ, CloudWatch alarms, and any future SQS fan-out are separate deployment work. Internal authentication is reusable for future internal routes; family-level operations are service functions, not additional HTTP endpoints.
+Start with dry runs for one or two weeks to calibrate the threshold. Internal authentication is reusable for future internal routes; family-level operations are service functions, not additional HTTP endpoints.
+
+## Scheduled kickoff (EventBridge)
+
+Production kickoffs come from EventBridge Scheduler. A Lambda POSTs to the endpoint above every Monday for the previous UTC week. It is deployed with AWS SAM from [infra/digest-eventbridge](../../infra/digest-eventbridge/), along with retries, dead-letter queues, and CloudWatch alarms. Any future SQS fan-out is separate work.
+
+### How it works
+
+```
+EventBridge Scheduler  cron(0 13 ? * MON *) UTC
+   │  input: {"scheduledTime": "<aws.scheduler.scheduled-time>"}
+   ▼
+Lambda  <stack>-kickoff  (src/index.mjs)
+   │  POST {AppBaseUrl}/api/internal/weekly-activity-digest/run
+   │  headers: x-fs-internal-secret (from SSM), x-fs-request-ts, x-fs-idempotency-key
+   ▼
+family_schema.family_activity_digest_run  (status = queued, trigger_source = eventbridge)
+   ▼
+EC2 digest worker (PM2: family-social-digest) processes the run and sends emails
+```
+
+- The Lambda queues the **previous** Monday 00:00Z – Sunday 23:59:59.999Z week. The week is derived from the schedule's `scheduledTime`, so retries always target the same week.
+- The idempotency key is deterministic: `eventbridge-weekly-<weekStart yyyy-mm-dd>` (`-dryrun` suffix for dry runs). A duplicate invocation hits the run table's `UNIQUE (week_start_utc, kickoff_idempotency_key)` and gets **409**, which the Lambda treats as success. Families never receive two digests for the same week from this path.
+- **202** and **409** succeed. Anything else (400, 401, 5xx, timeout, network error) throws.
+- Retries happen in two layers:
+  - **Scheduler → Lambda delivery** (throttling, permissions): up to 3 retries, then the scheduler dead-letter queue.
+  - **Lambda function errors**: Lambda's async invoke retries twice (about 1 and 2 minutes later), then the kickoff dead-letter queue.
+- The Lambda never waits for emails to be sent. Processing happens in the EC2 worker; the run table tracks its outcome.
+- The Lambda runs outside a VPC and calls the app's public HTTPS URL. It does not connect to the database.
+
+### Files
+
+| File | Purpose |
+|---|---|
+| [template.yaml](../../infra/digest-eventbridge/template.yaml) | SAM template: function, schedule, IAM, dead-letter queues, SNS topic, alarms, log group |
+| [src/index.mjs](../../infra/digest-eventbridge/src/index.mjs) | Lambda handler (no npm dependencies; uses built-in `fetch` and the runtime's AWS SDK v3) |
+| [src/package.json](../../infra/digest-eventbridge/src/package.json) | Minimal manifest required by `sam build` for Node.js |
+| [samconfig.toml](../../infra/digest-eventbridge/samconfig.toml) | Stack name, region (`us-east-2`), and deploy parameters |
+
+### Prerequisites
+
+Run the SAM installation, configuration, deployment, and Lambda test commands below in **Windows PowerShell on your development computer**, using your local project checkout. Do not run them in the EC2 SSH session (`[ec2-user@... ~]$`). SAM deploys the AWS resources remotely; it does not need to be installed on EC2. The EC2 server continues running the app and the PM2 digest worker.
+
+1. **AWS SAM CLI (Windows).** Install with `winget install Amazon.SAM-CLI` (or the Windows MSI from AWS), then open a new local PowerShell terminal and run `sam --version`. `winget` is a Windows package manager and is not available in the Linux EC2 shell.
+2. **AWS credentials that can deploy.** The `family-social-s3-user` profile is S3-only and **cannot** deploy this stack. Use an admin profile or a deploy user allowed to manage CloudFormation, IAM roles (create and `iam:PassRole`), Lambda, EventBridge Scheduler, SQS, SNS, CloudWatch, CloudWatch Logs, and the SAM artifact S3 bucket. Add `--profile <name>` to every `sam` and `aws` command below, or set `$env:AWS_PROFILE = "<name>"` for the terminal session.
+3. **The existing SSM parameter** holding `FS_INTERNAL_API_SECRET`, in `us-east-2`. Confirm its name, type, and key (this returns no secret value):
+
+   ```powershell
+   aws ssm describe-parameters --region us-east-2 --query "Parameters[].{Name:Name,Type:Type,KeyId:KeyId}" --output table
+   ```
+
+   - `Type` should be `SecureString`.
+   - If `KeyId` is `alias/aws/ssm` (the default), leave `InternalSecretKmsKeyArn` unset. Otherwise, pass that key's ARN.
+   - The value must match the `FS_INTERNAL_API_SECRET` used by the web app on EC2.
+4. **The app is publicly reachable** at `AppBaseUrl` over HTTPS.
+
+### Configure
+
+Edit [samconfig.toml](../../infra/digest-eventbridge/samconfig.toml) and replace the placeholders in `parameter_overrides`:
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `AppBaseUrl` | Yes | HTTPS origin only, no path or trailing slash, e.g. `https://my-family-social.com` |
+| `InternalSecretParameterName` | Yes | Parameter name exactly as stored, with or without a leading `/` |
+| `AlertEmail` | No | Subscribed to the alarm topic. AWS sends a confirmation email; click it, or no alerts are delivered. Remove the line to skip. |
+| `InternalSecretKmsKeyArn` | No | Only for a customer-managed KMS key |
+| `KickoffScheduleExpression` | No | Default `cron(0 13 ? * MON *)`: Mondays 13:00 UTC (8 AM CDT / 7 AM CST) |
+| `ScheduleState` | No | `ENABLED` (default) or `DISABLED` |
+
+These values are not secrets and can be committed. Never put the secret value in the infra folder.
+
+### Build, validate, and deploy
+
+In local Windows PowerShell, start at the repository root and enter the infra folder (not the EC2 SSH session):
+
+```powershell
+cd infra\digest-eventbridge
+sam validate --lint
+sam build
+sam deploy
+```
+
+`sam deploy` reads `samconfig.toml`, shows a change set, and waits for you to confirm. The first deploy creates the SAM artifact bucket (`resolve_s3 = true`). Use `sam deploy --guided` instead if you want to be prompted for each parameter.
+
+**Recommendation for the first deploy:** set `ScheduleState=DISABLED`, run the tests below, then redeploy with `ENABLED`.
+
+### Test after deploying
+
+Function name: `family-social-digest-eventbridge-kickoff`.
+
+1. **Queue a dry run for last week.** It sends no emails.
+
+   ```powershell
+   Set-Content -Path $env:TEMP\digest-dryrun.json -Value '{"dryRun":true}' -NoNewline
+   aws lambda invoke --region us-east-2 --function-name family-social-digest-eventbridge-kickoff `
+     --payload fileb://$env:TEMP\digest-dryrun.json $env:TEMP\digest-out.json
+   Get-Content $env:TEMP\digest-out.json
+   ```
+
+   Expect `"outcome":"queued"` with a `runId`. Invoking again returns `"outcome":"already-queued"` (409), which proves idempotency. To repeat a dry run for the same week, use SoapUI with a different key.
+
+2. **Check the run in the database:**
+
+   ```sql
+   SELECT run_id, week_start_utc, kickoff_idempotency_key, trigger_source, dry_run, status,
+          families_scanned, families_threshold_met, emails_sent, emails_failed, error_message,
+          created_at, started_at, finished_at
+     FROM family_schema.family_activity_digest_run
+    ORDER BY created_at DESC
+    LIMIT 5;
+   ```
+
+   `status` should move from `queued` to `processing` to `completed` once the EC2 worker picks it up.
+
+3. **Read the Lambda logs:**
+
+   ```powershell
+   aws logs tail /aws/lambda/family-social-digest-eventbridge-kickoff --region us-east-2 --since 1h
+   ```
+
+4. **Backfill or re-queue a specific week (live):** pass a Monday start. Use `{"weekStartUtc":"2026-10-05T00:00:00Z","dryRun":true}` to keep it dry.
+
+   ```powershell
+   Set-Content -Path $env:TEMP\digest-week.json -Value '{"weekStartUtc":"2026-10-05T00:00:00Z"}' -NoNewline
+   aws lambda invoke --region us-east-2 --function-name family-social-digest-eventbridge-kickoff `
+     --payload fileb://$env:TEMP\digest-week.json $env:TEMP\digest-out.json
+   ```
+
+### Operations
+
+| Symptom | Where to look | Action |
+|---|---|---|
+| `<stack>-kickoff-errors` alarm | Lambda logs (`[digest-kickoff] Kickoff failed` with status, code, and issues) | Often a transient app outage that a retry fixes. Check that the run row exists. |
+| `<stack>-kickoff-dlq` alarm | Kickoff dead-letter queue | All retries failed; **no run was queued**. Fix the cause (app down, 401 secret mismatch, 400 contract change), re-invoke with that week's `weekStartUtc`, then purge the queue. |
+| `<stack>-scheduler-dlq` alarm | Scheduler dead-letter queue | The scheduler couldn't invoke the Lambda (permissions, throttling). Re-invoke manually, then purge. |
+| Run row stuck in `queued` | `pm2 status` on EC2 | The worker isn't running: `pm2 restart family-social-digest`. |
+| Run row `failed` | `error_message` and the result and delivery tables | Re-run through SoapUI with a new key and `forceReplay` and `operatorNotes`. The scheduler never replays. |
+
+Purge a dead-letter queue after handling it (queue URLs are in the stack outputs):
+
+```powershell
+aws cloudformation describe-stacks --region us-east-2 --stack-name family-social-digest-eventbridge --query "Stacks[0].Outputs" --output table
+aws sqs purge-queue --region us-east-2 --queue-url <queue url>
+```
+
+**Pause the schedule** (for example, while testing a local worker against the shared database; see [Testing Digest Worker Changes](#testing-digest-worker-changes)): redeploy with `ScheduleState=DISABLED`. Avoid changing resources in the console; the template stops matching what's deployed.
+
+**Rotating the secret:** update the SSM parameter and the app's `FS_INTERNAL_API_SECRET` together. The Lambda caches the value for at most 5 minutes and clears its cache on a 401.
+
+**Not covered yet:** these alarms catch kickoff failures only. A run that is queued but never processed, or that ends `failed`, needs a watchdog. That would require an authenticated status endpoint in the app plus a daily watchdog schedule added to the template.
+
+### Changing or removing the stack
+
+- **Code or template change:** edit, then `sam validate --lint; sam build; sam deploy` from `infra\digest-eventbridge`.
+- **Another scheduled job:** add a new `AWS::Serverless::Function` with its own `ScheduleV2` event in `template.yaml`.
+- **Remove everything:** `sam delete --stack-name family-social-digest-eventbridge --region us-east-2`. The SSM parameter is not part of the stack and is left untouched.
 
 ## Local and AWS Digest Workers
 The POST’s destination determines where the request is accepted—not which worker processes it. The flow is:
@@ -231,3 +404,80 @@ Going forward
 - For independent local and AWS testing: use separate databases so each environment has its own queue and lock.
   
 Changing the REST hostname alone does not isolate the workers.
+
+## Testing Digest Worker Changes
+When changes have been made to the local digest worker and you want to test the changes locally you have two updates to perform.
+- In Neon, turn off all emails but one
+- On EC2 server, stop digest worker
+
+### Pre-Testing
+
+#### Neon 
+Run the following command to turn off emails for all family members in the Texas Jones family (28). 
+
+```sql
+-- Texas Jones family member settings for the activity summary
+-- MEMBER 63 gets email but 64, 67, 97, 98 should remain FALSE as they are bogus emails 
+select mo.fk_option_id, mo.is_selected, mo.fk_member_id, mbr.first_name, mbr.last_name
+  from family_schema.member_option mo,
+       family_schema.member mbr
+  where mo.fk_option_id = 32
+  and mo.fk_member_id = mbr.id
+  and mo.is_selected = TRUE
+  and mbr.fk_family_id = 28
+--  and mo.fk_member_id not in (63, 64, 67, 97, 98)
+;
+
+-- Turn off email receipt OF the activity summary. 
+update family_schema.member_option
+  set is_selected = FALSE
+    where fk_option_id = 32
+    and is_selected = TRUE
+    and fk_member_id not in (1, 63, 64, 67, 97, 98)
+;
+
+-- Turn off email receipt OF the activity summary. 
+update family_schema.member_option
+  set is_selected = TRUE
+    where fk_option_id = 32
+    and is_selected = FALSE
+    and fk_member_id not in (1, 63, 64, 67, 97, 98)
+;
+```
+
+#### EC2 
+, you have to stop the AWS digest worker and then start the local digest worker. Here are the instructions to do so. 
+
+```bash
+pm2 stop family-social-digest
+```
+
+#### VS Code Terminal
+Start digest worker in watch mode.
+
+```powershell
+npx tsx watch scripts\weekly-activity-digest-worker.ts --env-file=.env.google-local
+```
+### Post-Testing
+After testing, reverse the steps in the following sequence. 
+
+#### VS Code Terminal
+
+Inside the digest worker terminal run <CTL-C> To kill it.
+
+#### EC2
+
+```bash
+pm2 restart family-social-digest
+```
+
+#### Neon
+```sql
+-- Turn off email receipt OF the activity summary. 
+update family_schema.member_option
+  set is_selected = TRUE
+    where fk_option_id = 32
+    and is_selected = FALSE
+    and fk_member_id not in (1, 63, 64, 67, 97, 98)
+;
+```

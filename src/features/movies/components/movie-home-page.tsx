@@ -380,7 +380,7 @@ export function MovieHomePage({
     }));
 
   const allMovies = [...filteredFinderMovies]
-    .sort((leftMovie, rightMovie) => +new Date(rightMovie.updatedAt) - +new Date(leftMovie.updatedAt))
+    .sort((leftMovie, rightMovie) => leftMovie.movieTitle.localeCompare(rightMovie.movieTitle, undefined, { sensitivity: "base" }))
     .map((movie) => ({
       kind: "all" as const,
       id: movie.id,

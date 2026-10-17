@@ -381,7 +381,7 @@ export default function PoetryHomePage({
 
     if (directoryMode === "all") {
       return [...scopedPoemItems].sort((leftPoem, rightPoem) => (
-        new Date(rightPoem.createdAt).getTime() - new Date(leftPoem.createdAt).getTime()
+        leftPoem.poemTitle.localeCompare(rightPoem.poemTitle, undefined, { sensitivity: "base" })
       ));
     }
 

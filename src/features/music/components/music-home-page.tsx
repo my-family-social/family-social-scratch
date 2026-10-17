@@ -535,7 +535,7 @@ export function MusicHomePage({
   }, [selectedMusic]);
 
   const allMusics = [...filteredFinderMusics]
-    .sort((leftMusic, rightMusic) => +new Date(rightMusic.updatedAt) - +new Date(leftMusic.updatedAt))
+    .sort((leftMusic, rightMusic) => leftMusic.musicTitle.localeCompare(rightMusic.musicTitle, undefined, { sensitivity: "base" }))
     .map((music) => ({
       kind: "all" as const,
       id: music.id,

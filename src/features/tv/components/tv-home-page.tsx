@@ -353,7 +353,7 @@ export function TvHomePage({
     }));
 
   const allShows = [...visibleShows]
-    .sort((leftShow, rightShow) => +new Date(rightShow.updatedAt) - +new Date(leftShow.updatedAt))
+    .sort((leftShow, rightShow) => leftShow.showTitle.localeCompare(rightShow.showTitle, undefined, { sensitivity: "base" }))
     .map((show) => ({
       kind: "all" as const,
       id: show.id,
@@ -552,7 +552,7 @@ export function TvHomePage({
 
   const filteredAllShows = [...visibleShows]
     .filter((show) => filteredShowIds.has(show.id))
-    .sort((leftShow, rightShow) => +new Date(rightShow.updatedAt) - +new Date(leftShow.updatedAt))
+    .sort((leftShow, rightShow) => leftShow.showTitle.localeCompare(rightShow.showTitle, undefined, { sensitivity: "base" }))
     .map((show) => ({
       kind: "all" as const,
       id: show.id,

@@ -1,0 +1,193 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Family Social weekly activity digest kickoff. EventBridge Scheduler invokes a Lambda that
+  POSTs to /api/internal/weekly-activity-digest/run, which persists a row in
+  family_schema.family_activity_digest_run for the EC2 digest worker to process.
+
+Parameters:
+  AppBaseUrl:
+    Type: String
+    Description: Public HTTPS origin of the app (no path), e.g. https://dev.my-family-social.com
+    AllowedPattern: "^https://[^/]+$"
+  InternalSecretParameterName:
+    Type: String
+    Description: Existing SSM parameter name holding FS_INTERNAL_API_SECRET, exactly as stored (e.g. /family-social/prod/FS_INTERNAL_API_SECRET).
+  InternalSecretKmsKeyArn:
+    Type: String
+    Default: ""
+    Description: Customer-managed KMS key ARN for the parameter. Leave blank if it is a String or uses the default aws/ssm key.
+  KickoffScheduleExpression:
+    Type: String
+    Default: "cron(0 13 ? * MON *)"
+    Description: When to queue the previous week's digest (evaluated in UTC).
+  ScheduleState:
+    Type: String
+    Default: ENABLED
+    AllowedValues: [ENABLED, DISABLED]
+  AlertEmail:
+    Type: String
+    Default: ""
+    Description: Optional email address subscribed to failure alarms (confirm the SNS subscription email).
+
+Conditions:
+  HasKmsKey: !Not [!Equals [!Ref InternalSecretKmsKeyArn, ""]]
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+  # Parameter ARNs need exactly one "/" between "parameter" and the name.
+  SecretNameHasLeadingSlash: !Equals [!Select [0, !Split ["/", !Ref InternalSecretParameterName]], ""]
+
+Resources:
+  DigestKickoffFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-kickoff
+      Description: Queues the weekly activity digest for the previous UTC week.
+      CodeUri: src/
+      Handler: index.handler
+      Runtime: nodejs22.x
+      Architectures: [arm64]
+      MemorySize: 128
+      Timeout: 30
+      LoggingConfig:
+        LogGroup: !Ref DigestKickoffLogGroup
+      Environment:
+        Variables:
+          APP_BASE_URL: !Ref AppBaseUrl
+          INTERNAL_SECRET_PARAMETER_NAME: !Ref InternalSecretParameterName
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !If
+                - SecretNameHasLeadingSlash
+                - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${InternalSecretParameterName}
+                - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${InternalSecretParameterName}
+        - !If
+          - HasKmsKey
+          - Statement:
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: !Ref InternalSecretKmsKeyArn
+          - !Ref AWS::NoValue
+      # Function errors (non-202/409 responses, timeouts) are retried by Lambda's async invoke, then sent to this queue.
+      EventInvokeConfig:
+        MaximumRetryAttempts: 2
+        MaximumEventAgeInSeconds: 3600
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt KickoffDeadLetterQueue.Arn
+      Events:
+        WeeklyKickoff:
+          Type: ScheduleV2
+          Properties:
+            Name: !Sub ${AWS::StackName}-weekly-kickoff
+            Description: Queue the previous week's activity digest.
+            ScheduleExpression: !Ref KickoffScheduleExpression
+            ScheduleExpressionTimezone: UTC
+            State: !Ref ScheduleState
+            FlexibleTimeWindow:
+              Mode: "OFF"
+            Input: '{"scheduledTime":"<aws.scheduler.scheduled-time>"}'
+            # Covers failures to deliver the event to Lambda (throttling, permissions).
+            RetryPolicy:
+              MaximumRetryAttempts: 3
+              MaximumEventAgeInSeconds: 3600
+            DeadLetterConfig:
+              Arn: !GetAtt SchedulerDeadLetterQueue.Arn
+
+  DigestKickoffLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-kickoff
+      RetentionInDays: 90
+
+  KickoffDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${AWS::StackName}-kickoff-dlq
+      MessageRetentionPeriod: 1209600
+
+  SchedulerDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${AWS::StackName}-scheduler-dlq
+      MessageRetentionPeriod: 1209600
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${AWS::StackName}-alerts
+
+  AlertEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  KickoffErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-kickoff-errors
+      AlarmDescription: The digest kickoff Lambda failed (it may still succeed on retry; check its logs).
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref DigestKickoffFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+
+  KickoffDeadLetterAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-kickoff-dlq
+      AlarmDescription: The digest kickoff exhausted its retries; no run was queued for the week.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt KickoffDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+
+  SchedulerDeadLetterAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-scheduler-dlq
+      AlarmDescription: EventBridge Scheduler could not deliver the kickoff event to Lambda.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt SchedulerDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+
+Outputs:
+  KickoffFunctionName:
+    Value: !Ref DigestKickoffFunction
+  KickoffScheduleName:
+    Value: !Sub ${AWS::StackName}-weekly-kickoff
+  KickoffDeadLetterQueueUrl:
+    Value: !Ref KickoffDeadLetterQueue
+  SchedulerDeadLetterQueueUrl:
+    Value: !Ref SchedulerDeadLetterQueue
+  AlertTopicArn:
+    Value: !Ref AlertTopic

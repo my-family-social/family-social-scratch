@@ -50,3 +50,6 @@ family-social-s3-user_accessKeys.csv
 
 # Sentry Config File
 .env.sentry-build-plugin
+
+# AWS SAM build output
+.aws-sam/

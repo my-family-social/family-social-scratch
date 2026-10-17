@@ -1,0 +1,29 @@
+# SAM CLI configuration for the weekly activity digest kickoff.
+# Replace the <...> placeholders before the first deploy. Values here are not secrets:
+# the secret itself stays in SSM Parameter Store; only its name is configured.
+version = 0.1
+
+[default.global.parameters]
+stack_name = "family-social-digest-eventbridge"
+region = "us-east-2"
+
+[default.build.parameters]
+cached = true
+
+[default.validate.parameters]
+lint = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_s3 = true
+s3_prefix = "family-social-digest-eventbridge"
+parameter_overrides = [
+  "AppBaseUrl=https://dev.my-family-social.com",
+  "InternalSecretParameterName=/FS_INTERNAL_API_SECRET",
+  "AlertEmail=gamemaster@knotboardgames.com",
+  # Optional (template defaults shown):
+  # "InternalSecretKmsKeyArn=<customer-managed KMS key ARN>",
+  # "KickoffScheduleExpression=cron(0 13 ? * MON *)",
+  # "ScheduleState=ENABLED",
+]

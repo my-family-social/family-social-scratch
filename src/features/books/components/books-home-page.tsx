@@ -308,7 +308,7 @@ export default function BooksHomePage({
 
     if (directoryMode === "all") {
       return [...scopedBookItems].sort((leftBook, rightBook) => (
-        new Date(rightBook.createdAt).getTime() - new Date(leftBook.createdAt).getTime()
+        leftBook.bookTitle.localeCompare(rightBook.bookTitle, undefined, { sensitivity: "base" })
       ));
     }
 

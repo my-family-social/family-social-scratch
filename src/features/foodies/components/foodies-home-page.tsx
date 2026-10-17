@@ -400,7 +400,7 @@ export function FoodiesHomePage({
     }));
 
   const allRecipes = [...filteredFinderRecipes]
-    .sort((leftRecipe, rightRecipe) => +new Date(rightRecipe.updatedAt) - +new Date(leftRecipe.updatedAt))
+    .sort((leftRecipe, rightRecipe) => leftRecipe.recipeTitle.localeCompare(rightRecipe.recipeTitle, undefined, { sensitivity: "base" }))
     .map((recipe) => ({
       kind: "all" as const,
       id: recipe.id,

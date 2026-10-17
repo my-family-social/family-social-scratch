@@ -1,8 +1,6 @@
 // ...existing code...
 import { pgSchema, serial, bigserial, uuid, jsonb, index, boolean, pgEnum, foreignKey, unique } from "drizzle-orm/pg-core";
-import {is, like, not, sql } from 'drizzle-orm';
-import { number } from "zod";
-import { ta } from "date-fns/locale";
+import {sql } from 'drizzle-orm';
 import { bookCategoryTagReference, blogTagReference, poemCategoryTagReference, showTagReference, 
          movieTagReference, musicTagReference, featureReference, memberOptionReference,
          guidedTourReference, guidedTourStepReference  
